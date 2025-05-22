@@ -88,8 +88,8 @@ Data sources include the [DeepSurv Repository](https://github.com/jaredleekatzma
 - **Harrell’s C-Index** 
 - **Uno’s C-Index** 
 - **Censored D-Calibration (CensDcal)** 
-- **Cal[$S(t|\mathbf{x})$] (Slope / Intercept)**  
-- **Cal[$f(t|\mathbf{x})$] (Slope / Intercept)**
+- **Cal[S(t|x)] (Slope / Intercept)**  
+- **Cal[f(t|x)] (Slope / Intercept)**
 
 ---
 
@@ -118,8 +118,6 @@ If you find this work useful, please cite:
   year={2025}
 }
 
-📌 Note: This paper has been accepted to ICML 2025. The official proceedings citation will be updated once available.
 ---
 
-
-
+📌 Note: This paper has been accepted to ICML 2025. The official proceedings citation will be updated once available.
