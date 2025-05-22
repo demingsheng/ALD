@@ -117,7 +117,4 @@ If you find this work useful, please cite:
   journal={arXiv preprint arXiv:2505.03712},
   year={2025}
 }
-
----
-
 📌 Note: This paper has been accepted to ICML 2025. The official proceedings citation will be updated once available.
