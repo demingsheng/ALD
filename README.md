@@ -48,16 +48,78 @@ pip install -r requirements.txt
 
 ---
 
-## **Usage**
-
-### **1. Data Preparation**
-Place all datasets in the `datasets/` folder. Preprocessing functions are available in `datasets.py`.
-
-### **2. Running Experiments**
+## **Running Experiments**
 Use `script.py` to train and evaluate models:
 ```bash
 python script.py
 ```
 
-### **3. Visualizations**
-Figures and plots generated during analysis will be saved in the `figures/` folder.
+---
+
+## 📊 Datasets
+
+We evaluate our method on two types of datasets:
+
+### 🔬 Synthetic Datasets
+- **Norm Linear / Non-linear**
+- **Exponential**
+- **Weibull**
+- **LogNorm**
+- **Norm-heavy / medium / light**
+- **LogNorm-heavy / medium / light / same**
+
+### 🧪 Real-World Datasets
+- **METABRIC**: 9 features, 1523 train / 381 test, censoring: 0.42  
+- **WHAS**: 6 features, 1310 train / 328 test, censoring: 0.57  
+- **SUPPORT**: 14 features, 7098 train / 1775 test, censoring: 0.32  
+- **GBSG**: 7 features, 1785 train / 447 test, censoring: 0.42  
+- **TMBImmuno**: 3 features, 1328 train / 332 test, censoring: 0.49  
+- **BreastMSK**: 5 features, 1467 train / 367 test, censoring: 0.77  
+- **LGGGBM**: 5 features, 510 train / 128 test, censoring: 0.60  
+
+Data sources include the [DeepSurv Repository](https://github.com/jaredleekatzman/DeepSurv) and [cBioPortal](https://www.cbioportal.org/).
+
+---
+
+## 📏 Evaluation Metrics
+
+- **Mean Absolute Error (MAE)**
+- **Integrated Brier Score (IBS)** 
+- **Harrell’s C-Index** 
+- **Uno’s C-Index** 
+- **Censored D-Calibration (CensDcal)** 
+- **Cal[$S(t|\mathbf{x})$] (Slope / Intercept)**  
+- **Cal[$f(t|\mathbf{x})$] (Slope / Intercept)**
+
+---
+
+## 🧠 Models
+
+- **LogNorm MLE** – Parametric baseline using log-normal distribution and maximum likelihood estimation  
+- **DSM (LogNorm / Weibull)** – Neural parametric mixture models with log-normal or Weibull components  
+- **DeepSurv** – Semi-parametric Cox-based neural model for nonlinear covariate effects  
+- **RSF** – Random Survival Forests  
+- **GBM** – Gradient Boosted Models adapted for survival  
+- **DeepHit** – Non-parametric neural model predicting discrete-time survival distributions  
+- **CQRNN** – Censored quantile regression using Asymmetric Laplace loss  
+- **ALD (proposed)** – Our method based on Asymmetric Laplace Distribution
+
+---
+
+## 📎 Citation
+
+If you find this work useful, please cite:
+
+```bibtex
+@article{sheng2025learning,
+  title={Learning Survival Distributions with the Asymmetric Laplace Distribution},
+  author={Sheng, Deming and Henao, Ricardo},
+  journal={arXiv preprint arXiv:2505.03712},
+  year={2025}
+}
+
+📌 Note: This paper has been accepted to ICML 2025. The official proceedings citation will be updated once available.
+---
+
+
+
