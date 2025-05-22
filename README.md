@@ -1,6 +1,15 @@
-## Learning Survival Distributions with the Asymmetric Laplace Distribution
+# Learning Survival Distributions with the Asymmetric Laplace Distribution (ICML 2025)
 
-## **Directory Structure**
+This repository contains the official implementation of our ICML 2025 paper:
+
+**Learning Survival Distributions with the Asymmetric Laplace Distribution**  
+📄 [Paper on arXiv](https://arxiv.org/abs/2505.03712)
+
+## 🔍 Overview
+We propose a parametric survival analysis framework based on the Asymmetric Laplace Distribution (ALD), which enables closed-form computation of key distributional summaries such as mean, median, mode, and quantiles. Our method learns individual-level ALD parameters (location, scale, and asymmetry) via maximum likelihood estimation, supporting both observed and censored data. Compared to traditional and neural baselines—including DeepSurv, DeepHit, and CQRNN—our model achieves superior performance in terms of accuracy, calibration, and discrimination across 21 datasets and 9 evaluation metrics. This approach provides a robust and interpretable alternative for survival modeling in both synthetic and real-world applications.
+
+## 🗂️ Directory Structure
+
 ```
 datasets/
 ├── breast_msk_2018_clinical_data.tsv   
