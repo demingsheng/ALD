@@ -87,63 +87,6 @@ class MLP_Base(nn.Module):
 			x = self.layer3(x)
 
 		return x
-
-
-class MLP_ICALD(nn.Module):
-	def __init__(self, input_dim, n_hidden, output_dim, q_dim, is_dropout=False, dropout_rate=None):
-		super(MLP_ICALD, self).__init__()
-		self.layer1 = nn.Linear(input_dim, n_hidden, bias=True)
-		self.layer2_theta = nn.Linear(n_hidden+q_dim, n_hidden, bias=True)
-		self.layer2_sigma = nn.Linear(n_hidden+q_dim, n_hidden, bias=True)
-		self.layer2_kappa = nn.Linear(n_hidden+q_dim, n_hidden, bias=True)
-		self.layer3_theta = nn.Linear(n_hidden+q_dim, output_dim, bias=True)
-		self.layer3_sigma = nn.Linear(n_hidden+q_dim, output_dim, bias=True)
-		self.layer3_kappa = nn.Linear(n_hidden+q_dim, output_dim, bias=True)
-		self.projection = nn.Linear(input_dim, n_hidden, bias=False)
-		self.is_dropout = is_dropout
-		self.dropout_rate = dropout_rate 
-		self.layer1_q = nn.Linear(1, 2*q_dim, bias=True)
-		self.layer2_q = nn.Linear(2*q_dim, q_dim, bias=True)
-		if is_dropout:
-			self.dropout = nn.Dropout(dropout_rate)
-		
-
-	def forward(self, x, bq=None):
-		if bq is None:
-			bq = torch.rand(x.shape[0], 1, device=x.device) 
-		bq = torch.relu(self.layer1_q(bq))
-		bq = torch.exp(self.layer2_q(bq))	
-
-		residual = self.projection(x)
-		x = torch.relu(self.layer1(x))
-		x = x + residual  
-		x = torch.cat([x, bq], dim=1)
-
-		theta = torch.relu(self.layer2_theta(x))
-		if self.is_dropout:
-			theta = self.dropout(theta)
-		# theta = torch.exp(self.layer3_theta(torch.cat([theta, bq], dim=1))) # Force ALD's mode to be positive
-		theta = self.layer3_theta(torch.cat([theta, bq], dim=1))
-
-		sigma = torch.relu(self.layer2_sigma(x))
-		if self.is_dropout:
-			sigma = self.dropout(sigma)
-		sigma = torch.exp(self.layer3_sigma(torch.cat([sigma, bq], dim=1)))
-
-		kappa = torch.relu(self.layer2_kappa(x))
-		if self.is_dropout:
-			kappa = self.dropout(kappa)
-		kappa = torch.exp(self.layer3_kappa(torch.cat([kappa, bq], dim=1)))
-
-		return theta, sigma, kappa
-	
-	def ald_cdf(self, bx, by):
-		bq = torch.rand(bx.shape[0], 1, device=bx.device)
-		theta, sigma, kappa = self.forward(bx, bq)
-		ald_cdf_1 = 1 - 1 / (1 + kappa**2) * torch.exp(torch.sqrt(torch.tensor(2.0)) * kappa * (theta - by) / sigma)
-		ald_cdf_2 = kappa**2 / (1 + kappa**2) * torch.exp(torch.sqrt(torch.tensor(2.0)) * (by - theta) / (sigma * kappa))
-		ald_cdf = torch.where(by > theta, ald_cdf_1, ald_cdf_2)
-		return ald_cdf
 		
 	
 def safe_log(x, min_value=1e-8):
@@ -177,72 +120,6 @@ def loss_ald(y, theta, sigma, kappa, cen_indicator, is_use_censor_loss=True):
 		loss = loss_obs + loss_cen
 
 	return loss
-
-
-def loss_ald_cal(y, theta, sigma, kappa, cen_indicator, q, weight=0.1, is_use_censor_loss=True):
-	"""
-    L_ALD + L_Cal for the ICALD model (Eq.(12)).
-    Parameters:
-        y (Tensor): Target variable.
-        theta, sigma, kappa (Tensor): Parameters of the ALD.
-        cen_indicator (Tensor): 0 = observed, 1 = censored.
-        q ~ U(0, 1)(Tensor): Quantile percentage.
-        weight (float): Weight for nll loss (0 ~ 1). Calibration weight = 1 - weight.
-        is_use_censor_loss (bool): Whether to include censored samples in loss.
-    Returns:
-        Tuple: (total_loss, nll_loss, cal_loss)
-    """
-	# L_ALD: Negative Log-Likelihood Loss 
-	if not is_use_censor_loss:
-		loss_nll = loss_ald(y, theta, sigma, kappa, cen_indicator, is_use_censor_loss=False)
-	else:
-		loss_nll = loss_ald(y, theta, sigma, kappa, cen_indicator, is_use_censor_loss=True)
-
-	# L_Cal: Calibration Loss (|CDF(y) - q|)
-	from utils import get_ald_cdf
-	cdf = get_ald_cdf(y, theta, sigma, kappa)
-	loss_cal = torch.abs(cdf - q).mean()
-
-	loss = weight*loss_nll + (1-weight) * loss_cal
-	return loss, loss_nll, loss_cal
-
-
-def loss_ald_cqr(y, y_max, theta, sigma, kappa, cen_indicator, q, weight=0.1, is_use_censor_loss=True):
-	"""
-    L_ALD + L_Cqr for the ICALD model (Eq.(10)).
-    Parameters:
-        y (Tensor): Target variable.
-		y_max (float): pseudo value
-        theta, sigma, kappa (Tensor): Parameters of the ALD.
-        cen_indicator (Tensor): 0 = observed, 1 = censored.
-        q ~ U(0, 1)(Tensor): Quantile percentage.
-        weight (float): Weight for nll loss (0 ~ 1). Calibration weight = 1 - weight.
-        is_use_censor_loss (bool): Whether to include censored samples in loss.
-    Returns:
-        Tuple: (total_loss, nll_loss, cal_loss)
-    """
-	# L_ALD: Negative Log-Likelihood Loss 
-	if not is_use_censor_loss:
-		loss_nll = loss_ald(y, theta, sigma, kappa, cen_indicator, is_use_censor_loss=False)
-	else:
-		loss_nll = loss_ald(y, theta, sigma, kappa, cen_indicator, is_use_censor_loss=True)
-
-	# L_Cqr (with and without censoring)
-	from utils import get_ald_cdf
-	# cdf_y = get_ald_cdf(y, theta, sigma, kappa)
-	# cdf_y = torch.clamp(cdf_y, max=0.9999)
-	# weight_cqrnn = torch.abs((q-cdf_y)/(1 - cdf_y))
-	# pinball_obs = torch.where(y - theta >= 0, q * (y - theta), (q - 1) * (y - theta))* (cen_indicator == 0)
-	# pinball_cen_1 = torch.where(y - theta >= 0, q * (y - theta), (q - 1) * (y - theta)) * (cen_indicator == 1)
-	# pinball_cen_2 = torch.where(y_max - theta >= 0, q * (y_max - theta), (q - 1) * (y_max - theta)) * (cen_indicator == 1)
-	# loss_cqr = torch.sum(pinball_obs + weight_cqrnn * pinball_cen_1 + (1-weight_cqrnn)*pinball_cen_2).mean()
-
-	loss_pinball = torch.where(y - theta >= 0, q * (y - theta), (q - 1) * (y - theta)).sum()
-	loss_cqr = (loss_pinball * (cen_indicator == 0)).sum() / (cen_indicator == 0).sum()
-
-	loss = weight*loss_nll + (1-weight) * loss_cqr
-	
-	return loss, loss_nll, loss_cqr
 
 
 def loss_cqr(y, y_pred, y_max, cen_indicator, is_use_censor_loss=True):
