@@ -243,9 +243,6 @@ def get_models(model_str, dataset_dim, hidden_dim, q_dim = 4, n_quantiles = 10, 
         # model = MLP_Base(input_dim=dataset_dim, n_hidden=hidden_dim, output_dim=n_quantiles, is_dropout=is_dropout, dropout_rate=dropout_rate)
         model = MLP_Base(input_dim=dataset_dim, n_hidden=hidden_dim, output_dim=100, is_dropout=is_dropout, dropout_rate=dropout_rate)
 
-    elif model_str in ['Pre_ALD_Cal', 'Pre_ALD_Cqr']:
-        model = MLP_ICALD(input_dim=dataset_dim, n_hidden=hidden_dim, output_dim=1, q_dim=q_dim, is_dropout=is_dropout, dropout_rate=dropout_rate)
-
     elif model_str ==  "LogNorm":
         model = MLP_Base(input_dim=dataset_dim, n_hidden=hidden_dim, output_dim=2, is_dropout=is_dropout, dropout_rate=dropout_rate)
 
@@ -290,7 +287,7 @@ def train_model(model_str, model, model2, dataset_str, x_train_torch, y_train_to
     Train `model` (optionally with `model2` for post-calibration) on training data,
     then evaluate on test data. ALD-based models support optional validation with early stopping.
     """
-    valid_models = ['ALD', 'Pre_ALD_Cal', 'Pre_ALD_Cqr', 'Post_ALD_Cal', 'Post_ALD_Cqr', 'CQRNN', 'LogNorm']
+    valid_models = ['ALD', 'CQRNN', 'LogNorm']
     if model_str not in valid_models:
         return None
 
@@ -311,11 +308,6 @@ def train_model(model_str, model, model2, dataset_str, x_train_torch, y_train_to
     best_val_loss, stop_counter = float('inf'), 0
     is_lognorm = dataset_str in ['LogNorm_heavy', 'LogNorm_med', 'LogNorm_light', 'LogNorm_same']
 
-    if model_str in ['Pre_ALD_Cal', 'Pre_ALD_Cqr']:
-        epochs = 200 if is_lognorm else 2000
-        if not is_synth:
-            epochs = 400
-
     for ep in range(epochs):
         model.train()
         perm = torch.randperm(x_train_torch.size(0), device=device)
@@ -325,22 +317,10 @@ def train_model(model_str, model, model2, dataset_str, x_train_torch, y_train_to
             idx = perm[i:i + batch_size]
             x_b, y_b, cen_b = x_train_torch[idx], y_train_torch[idx], cen_indicator_train_torch[idx]
 
-            if model_str in ['ALD', 'Post_ALD_Cal', 'Post_ALD_Cqr']:
+            if model_str == 'ALD':
                 theta, sigma, kappa = model(x_b.to(device))
                 loss = loss_ald(y_b, theta, sigma, kappa, cen_b)
                 loss_nll = loss_cal = None
-
-            elif model_str in ['Pre_ALD_Cal', 'Pre_ALD_Cqr']:
-                q = torch.rand(x_b.size(0), 1, device=x_b.device)
-                theta, sigma, kappa = model(x_b, q)
-                if model_str == 'Pre_ALD_Cal':
-                    loss, loss_nll, loss_cal = loss_ald_cal(y_b, theta, sigma, kappa, cen_b, q)
-                else:
-                    loss, loss_nll, loss_cal = loss_ald_cqr(y_b, y_max, theta, sigma, kappa, cen_b, q)
-                if is_lognorm and ep <= 0.1 * epochs:
-                    loss = loss_nll
-                else:
-                    loss = weight * loss_nll + (1 - weight) * loss_cal
 
             elif model_str == 'CQRNN':
                 y_pred = model(x_b.to(device))
@@ -404,7 +384,7 @@ def train_model(model_str, model, model2, dataset_str, x_train_torch, y_train_to
         logs['test'][2].append(0.0)
 
         # Validation with early stopping (ALD-based)
-        # if model_str in ['ALD', 'Post_ALD_Cal', 'Post_ALD_Cqr']:
+        # if model_str == 'ALD':
         #     val_loss_ep = 0.0
         #     with torch.no_grad():
         #         for i in range(0, x_val_torch.size(0), batch_size):
@@ -435,61 +415,6 @@ def train_model(model_str, model, model2, dataset_str, x_train_torch, y_train_to
 
         if is_verbose:
             print(f"[Epoch {ep + 1}/{epochs}] Train Loss: {logs['train'][0][-1]}", end='\r')
-
-    # Post-calibration phase
-    if model_str in ['Post_ALD_Cal', 'Post_ALD_Cqr']:
-        model.eval()
-        with torch.no_grad():
-            theta_base, sigma_base, kappa_base = model(x_train_torch)
-
-        optimizer2 = torch.optim.Adam(model2.parameters(), lr=learning_rate, weight_decay=weight_decay)
-        scheduler2 = torch.optim.lr_scheduler.LambdaLR(optimizer2, lr_lambda)
-        epochs2 = 200 if is_lognorm else 1000
-        if not is_synth:
-            epochs2 = 400
-
-        for ep2 in range(epochs2):
-            model2.train()
-            perm2 = torch.randperm(x_train_torch.size(0), device=device)
-            loss2_train = 0.0
-
-            for k in range(0, x_train_torch.size(0), batch_size):
-                idx = perm2[k:k + batch_size]
-                x_b, y_b, cen_b = x_train_torch[idx], y_train_torch[idx], cen_indicator_train_torch[idx]
-                theta, sigma, kappa = theta_base[idx], sigma_base[idx], kappa_base[idx]
-                q = torch.rand(x_b.size(0), 1, device=device)
-                gamma = model2(torch.cat((x_b.to(device), q), dim=1))
-                theta_post, sigma_post, kappa_post = theta * gamma[:, 0:1], sigma * gamma[:, 1:2], kappa * gamma[:, 2:3]
-
-                if model_str == 'Post_ALD_Cal':
-                    loss2, _, _ = loss_ald_cal(y_b, theta_post, sigma_post, kappa_post, cen_b, q)
-                else:
-                    loss2, _, _ = loss_ald_cqr(y_b, y_max, theta_post, sigma_post, kappa_post, cen_b, q)
-
-                optimizer2.zero_grad()
-                loss2.backward()
-                optimizer2.step()
-                scheduler2.step()
-                loss2_train += loss2.item()
-
-            logs['post'][0].append(round(loss2_train / x_train_torch.size(0), 4))
-            if is_verbose:
-                print(f"[Post Epoch {ep2 + 1}/{epochs2}] Loss: {logs['post'][0][-1]}", end='\r')
-
-            # Evaluate post-calibration on test set
-            model.eval()
-            with torch.no_grad():
-                theta_test, sigma_test, kappa_test = model(x_test_torch.to(device))
-                q = torch.rand(x_test_torch.size(0), 1, device=device)
-                gamma = model2(torch.cat((x_test_torch.to(device), q), dim=1))
-                theta_post, sigma_post, kappa_post = theta_test * gamma[:, 0:1], sigma_test * gamma[:, 1:2], kappa_test * gamma[:, 2:3]
-
-                if model_str == 'Post_ALD_Cal':
-                    loss2_test, _, _ = loss_ald_cal(y_test_torch, theta_post, sigma_post, kappa_post, cen_indicator_test_torch, q)
-                else:
-                    loss2_test, _, _ = loss_ald_cqr(y_test_torch, y_max, theta_post, sigma_post, kappa_post, cen_indicator_test_torch, q)
-
-            logs['post'][1].append(round(loss2_test.item() / x_test_torch.size(0), 4))
 
     return logs
 
@@ -645,7 +570,7 @@ def evaluate(model_str, model, model2, dataset_str, x_test_torch, tte_test_torch
 
 def get_quantiles(model_str, ald_params=None, lognorm_params=None, cdf=None, q=torch.cat((torch.linspace(0.05, 0.95, steps=19), torch.tensor([0.9999])))):
 
-    if model_str in ["ALD", 'Pre_ALD_Cal', 'Pre_ALD_Cqr', 'Post_ALD_Cal', 'Post_ALD_Cqr']:
+    if model_str == "ALD":
         theta, sigma, kappa = ald_params['theta'], ald_params['sigma'], ald_params['kappa']
         quantiles_1 = theta + sigma * kappa * torch.log((1+kappa**2)*q/kappa**2)/torch.sqrt(torch.tensor([2]))
         quantiles_2 = theta - sigma * torch.log((1+kappa**2)*(1-q))/(torch.sqrt(torch.tensor([2]))*kappa)
@@ -803,7 +728,7 @@ def calculate_dcal(model_str, y_test, y_test_pred, cen_indicator_test, n_quantil
     closest_q_idx = np.argmin(np.abs(diffs), axis=1)
     closest_q = np.array([taus[closest_q_idx[i]] for i in range(y_test.shape[0])])
 
-    if model_str in ['ALD', 'Pre_ALD_Cal', 'Pre_ALD_Cqr', 'Post_ALD_Cal', 'Post_ALD_Cqr', 'LogNorm', 'DeepSurv', 'DeepHit']:
+    if model_str in ['ALD', 'LogNorm', 'DeepSurv', 'DeepHit']:
         closest_q = cdf.squeeze()
         closest_q = np.where(closest_q == 1, 0.9999, closest_q)
 
@@ -846,7 +771,7 @@ def calculate_dcal(model_str, y_test, y_test_pred, cen_indicator_test, n_quantil
 
 
 def calculate_slope_intercept(model_str, y_test, cen_indicator_test, y_test_pred=None, cdf=None):
-    if model_str in ['ALD', 'Pre_ALD_Cal', 'Pre_ALD_Cqr', 'Post_ALD_Cal', 'Post_ALD_Cqr', 'LogNorm', 'DeepSurv', 'DSM(Weibull)', 'DSM(LogNorm)', 'DeepHit', 'RSF', 'GBM']:
+    if model_str in ['ALD', 'LogNorm', 'DeepSurv', 'DSM(Weibull)', 'DSM(LogNorm)', 'DeepHit', 'RSF', 'GBM']:
         fcens_ratio = get_fcens_ratio(model_str, y_test, y_test_pred, cen_indicator_test, cdf=cdf)
         Calf_Slope, Calf_Intercept = np.polyfit(np.linspace(0.1, 0.9, 9), fcens_ratio, 1)
         Scens_ratio = get_Scens_ratio(model_str, y_test, y_test_pred[:, 1::2], cen_indicator_test, cdf=cdf)
@@ -866,7 +791,7 @@ def get_fcens_ratio(model_str, y_test, y_test_pred, cen_indicator_test, cdf=None
     
     dcal_data_cens = []
     
-    if model_str in ['ALD', 'Pre_ALD_Cal', 'Pre_ALD_Cqr', 'Post_ALD_Cal', 'Post_ALD_Cqr', 'LogNorm', 'DeepSurv', 'DSM(Weibull)', 'DSM(LogNorm)', 'DeepHit', 'RSF', 'GBM']: 
+    if model_str in ['ALD', 'LogNorm', 'DeepSurv', 'DSM(Weibull)', 'DSM(LogNorm)', 'DeepHit', 'RSF', 'GBM']: 
         n_quantiles = 20
         taus = np.linspace(1/n_quantiles, 1, n_quantiles)
         closest_q = cdf.squeeze()
@@ -912,7 +837,7 @@ def get_fcens_ratio(model_str, y_test, y_test_pred, cen_indicator_test, cdf=None
     dcal_data_cens = np.array(dcal_data_cens)
     
     fcens_ratio = []
-    if model_str in ['ALD', 'Pre_ALD_Cal', 'Pre_ALD_Cqr', 'Post_ALD_Cal', 'Post_ALD_Cqr', 'LogNorm', 'DeepSurv', 'DSM(Weibull)', 'DSM(LogNorm)', 'DeepHit', 'RSF', 'GBM']:  
+    if model_str in ['ALD', 'LogNorm', 'DeepSurv', 'DSM(Weibull)', 'DSM(LogNorm)', 'DeepHit', 'RSF', 'GBM']:  
         for i in range(9):   
             sum_value = sum(dcal_data_cens[:,1][9-i: 11+i]) 
             fcens_ratio.append(sum_value)
@@ -931,7 +856,7 @@ def get_Scens_ratio(model_str, y_test, y_test_pred, cen_indicator_test, cdf=None
     taus = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]
     n_quantiles = len(taus)
 
-    if model_str in ['ALD', 'Pre_ALD_Cal', 'Pre_ALD_Cqr', 'Post_ALD_Cal', 'Post_ALD_Cqr', 'LogNorm', 'DeepSurv', 'DSM(Weibull)', 'DSM(LogNorm)', 'DeepHit', 'RSF', 'GBM']: 
+    if model_str in ['ALD', 'LogNorm', 'DeepSurv', 'DSM(Weibull)', 'DSM(LogNorm)', 'DeepHit', 'RSF', 'GBM']: 
         closest_q = cdf.squeeze()
         closest_q = np.where(closest_q == 1, 0.9999, closest_q)
 
