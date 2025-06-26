@@ -22,7 +22,6 @@ class MLP_ALD(nn.Module):
 		if self.is_dropout:
 			self.dropout = nn.Dropout(dropout_rate)
 	
-			
 	def forward(self, x):
 		residual = self.projection(x)
 		x = torch.relu(self.layer1(x))
@@ -49,9 +48,9 @@ class MLP_ALD(nn.Module):
 		return theta, sigma, kappa
 
 	def ald_cdf(self, bx, by, gamma=None):
-		theta, kappa, sigma = self.forward(bx)
+		theta, sigma, kappa = self.forward(bx)
 		if gamma is not None:
-			theta, kappa, sigma = theta*gamma[:,0:1], kappa*gamma[:,1:2], sigma*gamma[:,2:3]
+			theta, sigma, kappa = theta*gamma[:,0:1], sigma*gamma[:,1:2], kappa*gamma[:,2:3]
 
 		ald_cdf_1 = 1 - 1 / (1 + kappa**2) * torch.exp(-torch.sqrt(torch.tensor(2.0)) * kappa * (by - theta) / sigma)
 		ald_cdf_2 = kappa**2 / (1 + kappa**2) * torch.exp(-torch.sqrt(torch.tensor(2.0)) * (theta - by) / (sigma * kappa))
