@@ -110,11 +110,12 @@ Data sources include the [DeepSurv Repository](https://github.com/jaredleekatzma
 If you find this work useful, please cite:
 
 ```bibtex
-@article{sheng2025learning,
+@inproceedings{sheng2025learning,
   title={Learning Survival Distributions with the Asymmetric Laplace Distribution},
   author={Sheng, Deming and Henao, Ricardo},
-  journal={arXiv preprint arXiv:2505.03712},
-  year={2025}
+  booktitle={International Conference on Machine Learning},
+  pages={54772--54809},
+  year={2025},
+  organization={PMLR}
 }
  ```
-📌 Note: This paper has been accepted to ICML 2025. The official proceedings citation will be updated once available.
