@@ -44,9 +44,9 @@ datasets_str_list = [
 models_str_list = [
     # Parametric & NonParametric ALD Models
     'ALD', 'CQRNN', 
-    # # (Semi-)Parametric Models & Mixture Models
-    'LogNorm', 'DeepSurv', 'DSM(Weibull)', 'DSM(LogNorm)'
-    # # NonParametric Models
+    # (Semi-)Parametric Models & Mixture Models
+    'LogNorm', 'DeepSurv', 'DSM(Weibull)', 'DSM(LogNorm)',
+    # NonParametric Models
     'DeepHit', 'RSF', 'GBM'
 ]
 
@@ -86,6 +86,9 @@ for epochs, batch_size, n_hidden, dropout_rate, dataset_str in params_grid:
                 x_train, tte_train, cen_train, y_train, cen_indicator_train, obs_indicator_train = data_train
                 x_test, tte_test, cen_test, y_test, cen_indicator_test, obs_indicator_test = data_test
 
+            # full training set: shared IBS time grid and censoring-KM weights for ALL models (see evaluate)
+            y_train_full, cen_indicator_train_full = np.copy(y_train), np.copy(cen_indicator_train)
+
             x_val_torch, tte_val_torch, cen_val_torch, y_val_torch, cen_indicator_val_torch = None, None, None, None, None
             if model_str in ['DeepSurv', 'DeepHit']:
             # if model_str in ['ALD', 'DeepSurv', 'DeepHit']:
@@ -105,7 +108,7 @@ for epochs, batch_size, n_hidden, dropout_rate, dataset_str in params_grid:
             model, model2 = get_models(model_str, dataset_dim, n_hidden, n_quantiles = 10, is_dropout = True, dropout_rate=dropout_rate)
 
             loss = train_model(model_str, model, model2, dataset_str, x_train_torch, y_train_torch, cen_indicator_train_torch, x_test_torch, y_test_torch, cen_indicator_test_torch, y_max, learning_rate, weight_decay, epochs, batch_size, device, is_synth=mydataset.synth_censor)
-            metrics = evaluate(model_str, model, model2, dataset_str, x_test_torch, tte_test_torch, y_test_torch, cen_indicator_test_torch, x_train_torch, y_train_torch, cen_indicator_train_torch, x_val_torch, y_val_torch, cen_indicator_val_torch, run+1, is_synth=mydataset.synth_censor)
+            metrics = evaluate(model_str, model, model2, dataset_str, x_test_torch, tte_test_torch, y_test_torch, cen_indicator_test_torch, x_train_torch, y_train_torch, cen_indicator_train_torch, x_val_torch, y_val_torch, cen_indicator_val_torch, run+1, is_synth=mydataset.synth_censor, y_train_full=y_train_full, cen_indicator_train_full=cen_indicator_train_full)
                     
             print(model_str, metrics)
             model_res[model_str].append(metrics)
