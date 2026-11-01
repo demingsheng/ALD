@@ -408,7 +408,7 @@ class METABRIC(RealTargetRealCensor):
 
 		path_cd = os.getcwd()
 		path_project = os.path.dirname(path_cd) # up one level
-		path_data = os.path.join(path_project,'Experiment/datasets')
+		path_data = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'datasets')  # repo-relative
 		# self.df = pd.read_csv(os.path.join(path_data,'metabric_IHC4_clinical_train_test.h5'))
 		dataset_file = os.path.join(path_data,'metabric_IHC4_clinical_train_test.h5')
 
@@ -448,7 +448,7 @@ class WHAS(RealTargetRealCensor):
 
 		path_cd = os.getcwd()
 		path_project = os.path.dirname(path_cd) # up one level
-		path_data = os.path.join(path_project,'Experiment/datasets')
+		path_data = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'datasets')  # repo-relative
 		# self.df = pd.read_csv(os.path.join(path_data,'metabric_IHC4_clinical_train_test.h5'))
 		dataset_file = os.path.join(path_data,'whas_train_test.h5')
 
@@ -491,7 +491,7 @@ class GBSG(RealTargetRealCensor):
 
 		path_cd = os.getcwd()
 		path_project = os.path.dirname(path_cd) # up one level
-		path_data = os.path.join(path_project,'Experiment/datasets')
+		path_data = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'datasets')  # repo-relative
 		# self.df = pd.read_csv(os.path.join(path_data,'metabric_IHC4_clinical_train_test.h5'))
 		dataset_file = os.path.join(path_data,'gbsg_cancer_train_test.h5')
 
@@ -538,7 +538,7 @@ class SUPPORT(RealTargetRealCensor):
 
 		path_cd = os.getcwd()
 		path_project = os.path.dirname(path_cd) # up one level
-		path_data = os.path.join(path_project,'Experiment/datasets')
+		path_data = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'datasets')  # repo-relative
 		dataset_file = os.path.join(path_data,'support_train_test.h5')
 
 		# datasets and opening code borrowed from https://github.com/jaredleekatzman/DeepSurv/blob/master/deepsurv/utils.py
@@ -579,7 +579,7 @@ class TMBImmuno(RealTargetRealCensor):
 
 		path_cd = os.getcwd()
 		path_project = os.path.dirname(path_cd) # up one level
-		path_data = os.path.join(path_project,'Experiment/datasets')
+		path_data = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'datasets')  # repo-relative
 		self.df=pd.read_table(os.path.join(path_data,'tmb_immuno_mskcc.tsv'),sep='\t')
 
 		event_arr = np.array(self.df['Overall Survival Status'])
@@ -631,7 +631,7 @@ class BreastMSK(RealTargetRealCensor):
 
 		path_cd = os.getcwd()
 		path_project = os.path.dirname(path_cd) # up one level
-		path_data = os.path.join(path_project,'Experiment/datasets')
+		path_data = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'datasets')  # repo-relative
 		self.df=pd.read_table(os.path.join(path_data, 'breast_msk_2018_clinical_data.tsv'),sep='\t')
 
 		event_arr = np.array(self.df['Overall Survival Status'])
@@ -684,7 +684,7 @@ class LGGGBM(RealTargetRealCensor):
 
 		path_cd = os.getcwd()
 		path_project = os.path.dirname(path_cd) # up one level
-		path_data = os.path.join(path_project,'Experiment/datasets')
+		path_data = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'datasets')  # repo-relative
 		self.df=pd.read_table(os.path.join(path_data,'lgggbm_tcga_pub_clinical_data.tsv'),sep='\t')
 
 		# remove nans
