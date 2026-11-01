@@ -418,9 +418,22 @@ def train_model(model_str, model, model2, dataset_str, x_train_torch, y_train_to
 
     return logs
 
-def evaluate(model_str, model, model2, dataset_str, x_test_torch, tte_test_torch, y_test_torch, cen_indicator_test_torch, x_train_torch, y_train_torch, cen_indicator_train_torch, x_val_torch, y_val_torch, cen_indicator_val_torch, n_runs, is_synth=True):
+def evaluate(model_str, model, model2, dataset_str, x_test_torch, tte_test_torch, y_test_torch, cen_indicator_test_torch, x_train_torch, y_train_torch, cen_indicator_train_torch, x_val_torch, y_val_torch, cen_indicator_val_torch, n_runs, is_synth=True, y_train_full=None, cen_indicator_train_full=None):
 
-    time_grid = np.linspace(np.percentile(y_train_torch.reshape(-1).detach().numpy(), 10), np.percentile(y_train_torch.reshape(-1).detach().numpy(), 90), 100)
+    # IBS protocol (App. B.2): 100 time points between the 10% and 90% quantiles of the training y, and IPCW
+    # weights from the KM of the censoring distribution on the training set. DeepSurv/DeepHit carve a validation
+    # split out of the training set, so script.py passes the full training arrays to keep the time grid and the
+    # weights identical across models.
+    if y_train_full is None:
+        y_train_full = y_train_torch.reshape(-1).detach().numpy()
+        cen_indicator_train_full = cen_indicator_train_torch.reshape(-1).detach().numpy()
+    y_train_full = np.asarray(y_train_full, dtype=float).reshape(-1)
+    cen_indicator_train_full = np.asarray(cen_indicator_train_full).reshape(-1)
+    time_grid = np.linspace(np.percentile(y_train_full, 10), np.percentile(y_train_full, 90), 100)
+    G = get_censoring_survival(y_train_full, cen_indicator_train_full)
+    y_test_np = y_test_torch.reshape(-1).detach().numpy()
+    obs_indicator_test_np = 1 - cen_indicator_test_torch.reshape(-1).detach().numpy()
+
     q = torch.cat((torch.linspace(0.05, 0.95, steps=19), torch.tensor([0.9999])))
     with torch.no_grad():
         if model_str == "ALD":
@@ -428,14 +441,17 @@ def evaluate(model_str, model, model2, dataset_str, x_test_torch, tte_test_torch
             y_test_pred = (theta + sigma/np.sqrt(2) * (1/kappa - kappa)).detach().numpy()
             quantiles = get_quantiles(model_str, ald_params={'theta': theta, 'sigma': sigma, 'kappa': kappa}, q=q)
             ald_cdfs = get_ald_cdf(y_test_torch, theta, sigma, kappa).detach().numpy()
-            ibs = calculate_ibs(model_str, y_test_torch.detach().numpy(), 1 - cen_indicator_test_torch.detach().numpy(), y_test_pred, time_grid, ald_params={'theta': theta.detach().numpy(), 'sigma': sigma.detach().numpy(), 'kappa': kappa.detach().numpy()})
+            surv_matrix = get_survival_matrix(model_str, time_grid, ald_params={'theta': theta.detach().numpy(), 'sigma': sigma.detach().numpy(), 'kappa': kappa.detach().numpy()})
+            ibs = calculate_ibs(surv_matrix, y_test_np, obs_indicator_test_np, time_grid, G)
             dcal_cens = calculate_dcal(model_str, y_test_torch.reshape(-1).detach().numpy(), quantiles[:, 1::2], cen_indicator_test_torch.reshape(-1).detach().numpy(), cdf=ald_cdfs)
             CalS_Slope, CalS_Intercept, Calf_Slope, Calf_Intercept = calculate_slope_intercept(model_str, y_test_torch.reshape(-1).detach().numpy(), cen_indicator_test_torch.reshape(-1).detach().numpy(), y_test_pred=quantiles, cdf=ald_cdfs)
             
         if model_str == "CQRNN":
             quantiles = model(x_test_torch)
             y_test_pred = quantiles[:,quantiles.shape[1]//2 - 1].detach().numpy().reshape(-1, 1)
-            ibs = calculate_ibs(model_str, y_test_torch.detach().numpy(), 1 - cen_indicator_test_torch.detach().numpy(), y_test_pred, time_grid)
+            # pass ALL predicted quantiles (not only the median) so that S(t) is defined over the whole grid
+            surv_matrix = get_survival_matrix(model_str, time_grid, quantiles=quantiles.detach().numpy())
+            ibs = calculate_ibs(surv_matrix, y_test_np, obs_indicator_test_np, time_grid, G)
             dcal_cens = calculate_dcal(model_str, y_test_torch.reshape(-1).detach().numpy(), quantiles[:, 9::10].detach().numpy(), cen_indicator_test_torch.reshape(-1).detach().numpy())
             CalS_Slope, CalS_Intercept, Calf_Slope, Calf_Intercept = calculate_slope_intercept(model_str, y_test_torch.reshape(-1).detach().numpy(), cen_indicator_test_torch.reshape(-1).detach().numpy(), y_test_pred=quantiles[:, 9::10].detach().numpy())
             
@@ -447,7 +463,8 @@ def evaluate(model_str, model, model2, dataset_str, x_test_torch, tte_test_torch
             y_test_pred = np.exp(lognorm_mean+lognorm_sd**2/2).reshape(-1, 1)
             lognorm_cdfs = lognorm.cdf(y_test_torch.detach().numpy(), s=lognorm_sd, scale=np.exp(lognorm_mean))
             quantiles = get_quantiles(model_str, lognorm_params={'mean': lognorm_mean, 'sd': lognorm_sd}, q=q)
-            ibs = calculate_ibs(model_str, y_test_torch.detach().numpy(), 1 - cen_indicator_test_torch.detach().numpy(), y_test_pred, time_grid, lognorm_params={'mean': lognorm_mean, 'sd': lognorm_sd})
+            surv_matrix = get_survival_matrix(model_str, time_grid, lognorm_params={'mean': lognorm_mean, 'sd': lognorm_sd})
+            ibs = calculate_ibs(surv_matrix, y_test_np, obs_indicator_test_np, time_grid, G)
             dcal_cens = calculate_dcal(model_str, y_test_torch.reshape(-1).detach().numpy(), quantiles[:, 1::2], cen_indicator_test_torch.reshape(-1).detach().numpy(), cdf=lognorm_cdfs)
             CalS_Slope, CalS_Intercept, Calf_Slope, Calf_Intercept = calculate_slope_intercept(model_str, y_test_torch.reshape(-1).detach().numpy(), cen_indicator_test_torch.reshape(-1).detach().numpy(), y_test_pred=quantiles, cdf=lognorm_cdfs)
             
@@ -459,7 +476,8 @@ def evaluate(model_str, model, model2, dataset_str, x_test_torch, tte_test_torch
             target_val = (y_val_torch.view(-1), 1 - cen_indicator_val_torch.view(-1))
             val = x_val_torch, target_val
             callbacks = [tt.callbacks.EarlyStopping()]
-            train_loss = model.fit(x_train_torch, target, 256, 200, callbacks, val_data=val, verbose=False)
+            with torch.enable_grad():  # evaluate() runs under torch.no_grad(); the baseline must train with gradients
+                train_loss = model.fit(x_train_torch, target, 256, 200, callbacks, val_data=val, verbose=False)
             _ = model.compute_baseline_hazards()
             surv = model.predict_surv_df(x_test_torch)
             y_test_pred = get_median_durations(model_str, surv, y_median = np.median(y_train_torch.reshape(-1).detach().numpy())).reshape(-1, 1)
@@ -467,7 +485,7 @@ def evaluate(model_str, model, model2, dataset_str, x_test_torch, tte_test_torch
             durations = surv.index.to_numpy()  
             idx = np.abs(durations[:, None] - y_test_torch.reshape(-1).detach().numpy()[None, :]).argmin(axis=0)
             deepsurv_cdfs = 1 - surv.values[idx, np.arange(surv.shape[1])].reshape(-1, 1)
-            ibs = calculate_ibs(model_str, y_test_torch.detach().numpy(), 1 - cen_indicator_test_torch.detach().numpy(), y_test_pred, time_grid, cdf=surv)
+            ibs = calculate_ibs(get_survival_matrix(model_str, time_grid, cdf=surv), y_test_np, obs_indicator_test_np, time_grid, G)
             dcal_cens = calculate_dcal(model_str, y_test_torch.reshape(-1).detach().numpy(), quantiles[:, 1::2], cen_indicator_test_torch.reshape(-1).detach().numpy(), cdf=deepsurv_cdfs)
             CalS_Slope, CalS_Intercept, Calf_Slope, Calf_Intercept = calculate_slope_intercept(model_str, y_test_torch.reshape(-1).detach().numpy(), cen_indicator_test_torch.reshape(-1).detach().numpy(), y_test_pred=quantiles, cdf=deepsurv_cdfs)
             
@@ -485,14 +503,15 @@ def evaluate(model_str, model, model2, dataset_str, x_test_torch, tte_test_torch
             model = DeepHitSingle(net, tt.optim.Adam, alpha=0.2, sigma=0.1, duration_index=labtrans.cuts)
             model.optimizer.set_lr(0.01)
             callbacks = [tt.callbacks.EarlyStopping()]
-            train_loss = model.fit(x_train_torch, target, 256, 200, callbacks, val_data=val, verbose=False)
+            with torch.enable_grad():  # evaluate() runs under torch.no_grad(); the baseline must train with gradients
+                train_loss = model.fit(x_train_torch, target, 256, 200, callbacks, val_data=val, verbose=False)
             surv = model.predict_surv_df(x_test_torch)
             y_test_pred = get_median_durations(model_str, surv, y_train=y_train_torch.reshape(-1).detach().numpy(), num_durations=num_durations).reshape(-1, 1)
             quantiles = get_quantiles(model_str, cdf=surv, q=q)
             durations = surv.index.to_numpy()  
             idx = np.abs(durations[:, None] - y_test_torch.reshape(-1).detach().numpy()[None, :]).argmin(axis=0)
             deephit_cdfs = 1 - surv.values[idx, np.arange(surv.shape[1])].reshape(-1, 1)
-            ibs = calculate_ibs(model_str, y_test_torch.detach().numpy(), 1 - cen_indicator_test_torch.detach().numpy(), y_test_pred, time_grid, cdf=surv)
+            ibs = calculate_ibs(get_survival_matrix(model_str, time_grid, cdf=surv), y_test_np, obs_indicator_test_np, time_grid, G)
             dcal_cens = calculate_dcal(model_str, y_test_torch.reshape(-1).detach().numpy(), quantiles[:, 1::2], cen_indicator_test_torch.reshape(-1).detach().numpy(), cdf=deephit_cdfs)
             CalS_Slope, CalS_Intercept, Calf_Slope, Calf_Intercept = calculate_slope_intercept(model_str, y_test_torch.reshape(-1).detach().numpy(), cen_indicator_test_torch.reshape(-1).detach().numpy(), y_test_pred=quantiles, cdf=deephit_cdfs)
             
@@ -504,7 +523,7 @@ def evaluate(model_str, model, model2, dataset_str, x_test_torch, tte_test_torch
             y_test_pred = np.array([get_median_survival_time(sf) for sf in surv]).reshape(-1, 1)
             quantiles = get_quantiles(model_str, cdf=surv, q=q)
             gbm_cdfs = np.array([1.0 if t > sf.x[-1] else 1 - sf(t) for sf, t in zip(surv, y_test_torch.reshape(-1).detach().numpy())])
-            ibs = calculate_ibs(model_str, y_test_torch.detach().numpy(), 1 - cen_indicator_test_torch.detach().numpy(), y_test_pred, time_grid, cdf=surv)
+            ibs = calculate_ibs(get_survival_matrix(model_str, time_grid, cdf=surv), y_test_np, obs_indicator_test_np, time_grid, G)
             dcal_cens = calculate_dcal(model_str, y_test_torch.reshape(-1).detach().numpy(), quantiles[:, 1::2], cen_indicator_test_torch.reshape(-1).detach().numpy(), cdf=gbm_cdfs)
             CalS_Slope, CalS_Intercept, Calf_Slope, Calf_Intercept = calculate_slope_intercept(model_str, y_test_torch.reshape(-1).detach().numpy(), cen_indicator_test_torch.reshape(-1).detach().numpy(), y_test_pred=quantiles, cdf=gbm_cdfs)
             
@@ -516,7 +535,7 @@ def evaluate(model_str, model, model2, dataset_str, x_test_torch, tte_test_torch
             y_test_pred = np.array([get_median_survival_time(sf) for sf in surv])
             quantiles = get_quantiles(model_str, cdf=surv, q=q)
             rsf_cdfs = np.array([1.0 if t > sf.x[-1] else 1 - sf(t) for sf, t in zip(surv, y_test_torch.reshape(-1).detach().numpy())])
-            ibs = calculate_ibs(model_str, y_test_torch.detach().numpy(), 1 - cen_indicator_test_torch.detach().numpy(), y_test_pred, time_grid, cdf=surv)
+            ibs = calculate_ibs(get_survival_matrix(model_str, time_grid, cdf=surv), y_test_np, obs_indicator_test_np, time_grid, G)
             dcal_cens = calculate_dcal(model_str, y_test_torch.reshape(-1).detach().numpy(), quantiles[:, 1::2], cen_indicator_test_torch.reshape(-1).detach().numpy(), cdf=rsf_cdfs)
             CalS_Slope, CalS_Intercept, Calf_Slope, Calf_Intercept = calculate_slope_intercept(model_str, y_test_torch.reshape(-1).detach().numpy(), cen_indicator_test_torch.reshape(-1).detach().numpy(), y_test_pred=quantiles, cdf=rsf_cdfs)
             
@@ -528,22 +547,23 @@ def evaluate(model_str, model, model2, dataset_str, x_test_torch, tte_test_torch
             
             x_train = x_train_torch.detach().numpy().astype(np.float64)
             x_test = x_test_torch.detach().numpy().astype(np.float64)
-            model.fit(x_train, y_train_torch.detach().numpy(), 1 - cen_indicator_train_torch.reshape(-1).detach().numpy())
-            time_grid = np.linspace(0, y_train_torch.max(), 1000)
+            with torch.enable_grad():  # evaluate() runs under torch.no_grad(); DSM must train with gradients
+                model.fit(x_train, y_train_torch.detach().numpy(), 1 - cen_indicator_train_torch.reshape(-1).detach().numpy())
+            dsm_grid = np.linspace(0, y_train_torch.max(), 1000)  # own grid; must NOT overwrite the shared IBS time_grid
             surv = [] 
-            for t in time_grid:
+            for t in dsm_grid:
                 surv_t = model.predict_survival(x_test, t)
                 surv.append(surv_t.reshape(-1, 1))
             surv = np.hstack(surv)
             cdf = []
             for i in range(surv.shape[0]):
                 cdf_vals = 1 - surv[i]  # CDF = 1 - S(t)
-                step_fn = StepFunction(time_grid, cdf_vals)
+                step_fn = StepFunction(dsm_grid, cdf_vals)
                 cdf.append(step_fn)
             y_test_pred = np.array([get_median_dsm_survival_time(item) for item in cdf]).reshape(-1, 1)
             quantiles = get_quantiles(model_str, cdf=cdf, q=q)
             dsm_cdfs = np.array([0 if t > cdf_vals.x[-1] else cdf_vals(t) for cdf_vals, t in zip(cdf, y_test_torch.reshape(-1).detach().numpy())])
-            ibs = calculate_ibs(model_str, y_test_torch.detach().numpy(), 1 - cen_indicator_test_torch.detach().numpy(), y_test_pred, time_grid, cdf=cdf)
+            ibs = calculate_ibs(get_survival_matrix(model_str, time_grid, cdf=cdf), y_test_np, obs_indicator_test_np, time_grid, G)
             dcal_cens = calculate_dcal(model_str, y_test_torch.reshape(-1).detach().numpy(), quantiles[:, 1::2], cen_indicator_test_torch.reshape(-1).detach().numpy(), cdf=dsm_cdfs)
             CalS_Slope, CalS_Intercept, Calf_Slope, Calf_Intercept = calculate_slope_intercept(model_str, y_test_torch.reshape(-1).detach().numpy(), cen_indicator_test_torch.reshape(-1).detach().numpy(), y_test_pred=quantiles, cdf=dsm_cdfs)
             
@@ -629,74 +649,106 @@ def get_quantiles(model_str, ald_params=None, lognorm_params=None, cdf=None, q=t
     return quantiles
 
 
-def calculate_ibs(model_str, y_test, obs_indicator_test, y_test_pred, time_grid, ald_params=None, lognorm_params=None, cdf=None, **kwargs):
+def get_censoring_survival(y_train, cen_indicator_train):
     """
-    Calculate the Integrated Brier Score (IBS) for the test set.
-    """
-    brier_scores = []
-    for time_t in time_grid:
-        brier_score = calculate_bs_at_t(model_str, y_test, obs_indicator_test, y_test_pred, time_t, ald_params=ald_params, lognorm_params=lognorm_params, cdf=cdf)
-        brier_scores.append(brier_score)
-    # Integrate the Brier Score over the time grid
-    ibs = np.trapz(brier_scores, time_grid) / (time_grid[-1] - time_grid[0])
-    
-    return ibs
+    Kaplan-Meier estimate of the CENSORING survival function G(t) = P(C > t), used for the
+    IPCW weights of the Brier score (Graf et al., 1999). It is fitted on the training set with
+    censoring as the "event" (cen_indicator = 1 if censored).
 
-
-def calculate_bs_at_t(model_str, y_test, obs_indicator_test, y_test_pred, time_t, ald_params=None, lognorm_params=None, cdf=None, **kwargs):
+    Returns a function G(t, left=False); left=True gives the left limit G(t-), which is what the
+    weight of a subject whose event is observed at y_i <= t uses.
     """
-    Calculate the Brier Score at time t for the test set.
-    """
+    y_train = np.asarray(y_train, dtype=float).reshape(-1)
+    cen_indicator_train = np.asarray(cen_indicator_train).reshape(-1)
     kmf = KaplanMeierFitter()
-    kmf.fit(y_test.reshape(-1), obs_indicator_test.reshape(-1))
-    G_t = kmf.predict(time_t)
-    G_y = kmf.predict(y_test.reshape(-1))    
-    G_y = G_y[~G_y.index.duplicated(keep='first')]
-    brier_scores = np.zeros(len(y_test))
-    if model_str in ['ALD', 'Pre_ALD_Cal', 'Pre_ALD_Cqr', 'Post_ALD_Cal', 'Post_ALD_Cqr']:
-        if model_str in ['ALD']:
-            theta, sigma, kappa = ald_params['theta'], ald_params['sigma'], ald_params['kappa']
-            survival_score = 1 - get_ald_cdf(np.array(time_t), theta, sigma, kappa)
-        if model_str in ["Pre_ALD_Cal", "Pre_ALD_Cqr", 'Post_ALD_Cal', 'Post_ALD_Cqr']:
-            survival_score_list = []
-            for i in range(len(ald_params['theta'])):
-                theta, sigma, kappa = ald_params['theta'][i], ald_params['sigma'][i], ald_params['kappa'][i]
-                survival_score_list.append(1 - get_ald_cdf(np.array(time_t), theta, sigma, kappa))
-            survival_score = np.mean(np.stack(survival_score_list, axis=0), axis=0)
-    
-    if model_str == "CQRNN":
-        scores = 1 - np.linspace(1/y_test_pred.shape[1], 1, y_test_pred.shape[1])
-        survival_score = np.zeros((len(y_test), 1))
-        for i in range(y_test_pred.shape[1] - 1):  
-            indices = (y_test_pred[:, i] <= time_t) & (time_t < y_test_pred[:, i+1])
-            dist_to_i = np.abs(time_t - y_test_pred[indices, i])
-            dist_to_i_plus_1 = np.abs(time_t - y_test_pred[indices, i + 1])
-            survival_score[indices, 0] = np.where(dist_to_i <= dist_to_i_plus_1, scores[i], scores[i + 1])
-        indices = time_t >= y_test_pred[:, y_test_pred.shape[1] - 1]
-        survival_score[indices, 0] = 0 
-    
+    kmf.fit(y_train, event_observed=cen_indicator_train)
+    km_times = kmf.survival_function_.index.to_numpy(dtype=float)
+    km_surv = kmf.survival_function_.iloc[:, 0].to_numpy(dtype=float)
+
+    def G(t, left=False):
+        t = np.asarray(t, dtype=float)
+        idx = np.searchsorted(km_times, t, side='left' if left else 'right') - 1
+        return np.where(idx >= 0, km_surv[np.clip(idx, 0, None)], 1.0)
+
+    return G
+
+
+def get_survival_matrix(model_str, time_grid, ald_params=None, lognorm_params=None, cdf=None, quantiles=None):
+    """
+    Predicted SURVIVAL probabilities S[i, k] = P(T > time_grid[k] | x_i), shape (n_test, len(time_grid)).
+    Every model must return S(t), not the CDF F(t) = 1 - S(t).
+    """
+    time_grid = np.asarray(time_grid, dtype=float)
+
+    if model_str == 'ALD':
+        theta, sigma, kappa = (np.asarray(ald_params[k]).reshape(-1, 1) for k in ('theta', 'sigma', 'kappa'))
+        with np.errstate(over='ignore', invalid='ignore'):  # np.where evaluates both ALD branches
+            return 1 - get_ald_cdf(time_grid[None, :], theta, sigma, kappa)
+
+    if model_str == 'CQRNN':
+        # quantiles: (n, Q); column j is the tau_j = (j+1)/Q quantile (same taus as loss_cqr).
+        # F(t) is linearly interpolated between predicted quantiles; S = 1 before the first one.
+        n, Q = quantiles.shape
+        taus = np.linspace(1/Q, 1, Q)
+        q_sorted = np.sort(quantiles, axis=1)  # monotone rearrangement against quantile crossing
+        F = np.stack([np.interp(time_grid, q_sorted[i], taus, left=0.0, right=1.0) for i in range(n)])
+        return 1 - F
+
     if model_str == 'LogNorm':
-        lognorm_mean, lognorm_sd = lognorm_params['mean'], lognorm_params['sd']
-        survival_score = lognorm.cdf(time_t, s=lognorm_sd, scale=np.exp(lognorm_mean))
+        lognorm_mean, lognorm_sd = lognorm_params['mean'].reshape(-1, 1), lognorm_params['sd'].reshape(-1, 1)
+        return lognorm.sf(time_grid[None, :], s=lognorm_sd, scale=np.exp(lognorm_mean))
 
     if model_str in ['DeepSurv', 'DeepHit']:
-        durations = cdf.index.to_numpy()
-        idx = (np.abs(durations - time_t)).argmin()
-        survival_score = 1 - cdf.iloc[idx].to_numpy()
+        # cdf is pycox's predict_surv_df: rows = durations, columns = subjects, values = S(t) (NOT a CDF).
+        # Right-continuous step function, S = 1 before the first duration.
+        durations = cdf.index.to_numpy(dtype=float)
+        surv_values = cdf.to_numpy()                                   # (n_durations, n)
+        idx = np.searchsorted(durations, time_grid, side='right') - 1  # (T,)
+        S = surv_values[np.clip(idx, 0, None)].T                       # (n, T)
+        S[:, idx < 0] = 1.0
+        return S
 
     if model_str in ['RSF', 'GBM']:
-        survival_score = np.array([sf(time_t) for sf in cdf])
-    
-    if model_str in ['DSM(Weibull)', 'DSM(LogNorm)']:
-        survival_score = np.array([1 - sf(time_t) for sf in cdf])
-    
-    for i in range(len(y_test)):
-        if y_test[i] <= time_t and obs_indicator_test[i] == 1:
-            brier_scores[i] = ((0 - survival_score[i])**2) / G_y[y_test[i]]
-        elif y_test[i] > time_t:
-            brier_scores[i] = ((1 - survival_score[i])**2) / G_t
+        # sksurv StepFunctions of S(t)
+        return np.stack([sf(time_grid) for sf in cdf])
 
-    return np.mean(brier_scores)
+    if model_str in ['DSM(Weibull)', 'DSM(LogNorm)']:
+        # cdf holds StepFunctions of F(t) = 1 - S(t)
+        return 1 - np.stack([sf(time_grid) for sf in cdf])
+
+    raise ValueError(f"get_survival_matrix: unknown model_str {model_str}")
+
+
+def calculate_ibs(surv_matrix, y_test, obs_indicator_test, time_grid, G):
+    """
+    IPCW Integrated Brier Score (paper App. B.2, Eq. 40-41):
+        BS(t) = mean_i [ S(t|x_i)^2       * 1(y_i <= t, e_i = 1) / G(y_i-)
+                       + (1 - S(t|x_i))^2 * 1(y_i > t)           / G(t)    ]
+        IBS   = 1/(t2 - t1) * int_{t1}^{t2} BS(t) dt
+
+    surv_matrix: predicted S(t|x_i), shape (n, T), from get_survival_matrix
+    obs_indicator_test: 1 if the event is observed, 0 if censored
+    G: censoring survival function from get_censoring_survival (fitted on the training set)
+    """
+    y = np.asarray(y_test, dtype=float).reshape(-1)
+    e = np.asarray(obs_indicator_test).reshape(-1)
+    time_grid = np.asarray(time_grid, dtype=float)
+    S = np.asarray(surv_matrix, dtype=float)
+    assert S.shape == (len(y), len(time_grid)), f"surv_matrix has shape {S.shape}, expected {(len(y), len(time_grid))}"
+
+    G_t = G(time_grid)            # (T,)
+    G_y = G(y, left=True)         # (n,)
+    died = (y[:, None] <= time_grid[None, :]) & (e[:, None] == 1)
+    alive = y[:, None] > time_grid[None, :]
+    if np.any(G_t <= 0) or np.any(G_y[died.any(axis=1)] <= 0):
+        raise ValueError("Censoring survival G is 0 inside the time grid; shrink the grid.")
+
+    with np.errstate(divide='ignore', invalid='ignore'):
+        bs = np.where(died, S**2 / G_y[:, None], 0.0) + np.where(alive, (1 - S)**2 / G_t[None, :], 0.0)
+    bs_t = bs.mean(axis=0)
+
+    trapz = getattr(np, 'trapezoid', None) or np.trapz
+    return trapz(bs_t, time_grid) / (time_grid[-1] - time_grid[0])
 
 
 def calculate_dcal(model_str, y_test, y_test_pred, cen_indicator_test, n_quantiles=10, cdf=None):
